@@ -277,11 +277,6 @@ start_time = datetime.now(timezone.utc)
 #discover book urls
 book_urls = discover_books(URL, max_pages=3)
 
-book_urls.append({
-    "product_url": "https://books.toscrape.com/catalogue/fake-book-12345.html",
-    "source_page": URL
-})
-
 #extract raw records
 raw_records =[]
 failed_pages =[]
