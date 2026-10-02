@@ -5,12 +5,25 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from datetime import datetime , timezone
 import hashlib
+import json
+from pydantic import BaseModel , ValidationError
 
 URL = "https://books.toscrape.com/catalogue/page-1.html"
 
 HEADERS = {
     "User-Agent": "FlyRankInternship-A9/1.0 (+https://github.com/Mayakandil/web-scraping-pipeline)"
 }
+
+class Book(BaseModel):
+    title: str
+    product_url: str
+    price_text : str
+    price_gbp: float
+    availability_text: str
+    rating_text: str
+    description: str | None
+    source_page: str
+    fetched_at: str
 
 
 # ==========================================
@@ -146,11 +159,17 @@ def discover_books(start_url, max_pages=3):
 
     return unique_books
 
+# ==========================================
+# STAGE 4: HELPER FUN
+# ==========================================
 
+def clean_price(price_text):
+    return float(price_text.replace("£",""))
 
 # ==========================================
 # STAGE 3 : EXTRACT BOOK INFO
 # ==========================================
+
 def extract_book(product_url , source_page):
     html = fetch_page(product_url)
     soup = BeautifulSoup(html , "html.parser")
@@ -163,7 +182,7 @@ def extract_book(product_url , source_page):
     #PRICE
     price_element = soup.select_one("div.product_main p.price_color")
     price_text = price_element.get_text(strip=True)
-
+    price_gbp = clean_price(price_text)
 
     #AVAILABILTY  
     availability_element = soup.select_one("div.product_main p.availability")
@@ -198,6 +217,7 @@ def extract_book(product_url , source_page):
     "title": title,
     "product_url": product_url,
     "price_text": price_text,
+    "price_gbp":price_gbp,
     "availability_text": availability_text,
    "rating_text": rating_text,
     "description": description,
@@ -207,25 +227,20 @@ def extract_book(product_url , source_page):
 
     return record
 
-
-
-
-    
-
-
 # ==========================================
 # RUN
 # ==========================================
 
-book_urls = discover_books(
-    URL,
-    max_pages=3
-)
+
+#discover book urls
+book_urls = discover_books(URL, max_pages=3)
+
+#extract raw records
 raw_records =[]
+
 for book in book_urls:
     record = extract_book(book["product_url"], book["source_page"])
     raw_records.append(record)
-
 
 print("\n--- Extraction Summary ---")
 print(f"Raw records extracted: {len(raw_records)}")
@@ -233,3 +248,33 @@ print(f"Raw records extracted: {len(raw_records)}")
 if raw_records:
     print("\nFirst record:")
     print(raw_records[0])
+
+
+# validate records
+valid_records =[]
+errors=[]
+for record in raw_records:
+    
+    try:
+        book = Book(**record)
+        valid_records.append(book.model_dump())
+    
+    except ValidationError as error:
+        errors.append({"record":record, "reason":str(error)})
+
+
+# fun to save data as json 
+
+def save_json(data, file_path):
+    path = Path(file_path)
+    path.parent.mkdir( parents = True, exist_ok = True)
+    path.write_text(json.dumps(data, indent=2 , ensure_ascii=False), encoding="utf-8")
+
+save_json( valid_records, "output/books.json")
+save_json(errors,"output/errors.json")
+
+
+#print validation summary 
+print("\n--- Validation Summary ---")
+print(f"Valid records: {len(valid_records)}")
+print(f"Invalid records: {len(errors)}")
