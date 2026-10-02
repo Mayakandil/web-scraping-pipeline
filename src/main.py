@@ -30,7 +30,13 @@ class Book(BaseModel):
 # STAGE 1: FETCH + CACHE
 # ==========================================
 
+pages_fetched = 0
+cache_hits = 0
+
 def fetch_page(url):
+
+    global pages_fetched , cache_hits
+
 
     # Example:
     # page-1.html -> cache/page-1.html
@@ -39,17 +45,53 @@ def fetch_page(url):
     cache_file = Path("cache") / f"{url_hash}.html"
     # If we already downloaded this page before,
     # read it from the cache instead of the internet.
+    
     if cache_file.exists():
+        cache_hits += 1
         html = cache_file.read_text(encoding="utf-8")
         print(f"CACHE HIT: {url}")
         return html
 
+
+    #try max 2 times
+    for attempt in range(2):
+        try:# Otherwise, fetch it from the website.
+            response = requests.get(url, headers=HEADERS, timeout=10)
+            
+            #Success
+            if response.status_code == 200:
+                pages_fetched +=1
+                response.encoding = response.apparent_encoding
+                html = response.text
+
+                cache_file.parent.mkdir(parents=True, exist_ok=True)
+                cache_file.write_text(html, encoding="utf-8")
+                print(f"fetch : {url}")
+                time.sleep(0.5)
+                return html
+
+            if response.status_code>=500 :
+                print(f"SERVER ERROR {response.status_code} - retrying ....")
+                time.sleep(1)
+                continue
+
+
+            #do not retry 404,403, etc
+            raise Exception(f" HTTP {response.status_code}")
+
+        except requests.Timeout :
+            if attempt ==0 :
+                print("timeout - retryingg ...")
+                time.sleep(1)
+                continue
+            raise Exception("Request timed out ")
+
+
+
+        
+
     # Otherwise, fetch it from the website.
-    response = requests.get(
-        url,
-        headers=HEADERS,
-        timeout=10
-    )
+    
 
     if response.status_code != 200:
         raise Exception(
@@ -230,17 +272,29 @@ def extract_book(product_url , source_page):
 # ==========================================
 # RUN
 # ==========================================
-
+start_time = datetime.now(timezone.utc)
 
 #discover book urls
 book_urls = discover_books(URL, max_pages=3)
 
+book_urls.append({
+    "product_url": "https://books.toscrape.com/catalogue/fake-book-12345.html",
+    "source_page": URL
+})
+
 #extract raw records
 raw_records =[]
+failed_pages =[]
+
 
 for book in book_urls:
-    record = extract_book(book["product_url"], book["source_page"])
-    raw_records.append(record)
+   try:
+        record = extract_book(book["product_url"], book["source_page"])
+        raw_records.append(record)
+    
+   except Exception as error:
+       print(f"FAILED: {book['product_url']} - {error}")
+       failed_pages.append({"url": book["product_url"], "reason": str(error)})
 
 print("\n--- Extraction Summary ---")
 print(f"Raw records extracted: {len(raw_records)}")
@@ -278,3 +332,24 @@ save_json(errors,"output/errors.json")
 print("\n--- Validation Summary ---")
 print(f"Valid records: {len(valid_records)}")
 print(f"Invalid records: {len(errors)}")
+
+end_time = datetime.now(timezone.utc)
+
+duration = (end_time - start_time).total_seconds()
+
+run_report = {
+    "start_time": start_time.isoformat(),
+    "duration_seconds": duration,
+    "pages_fetched": pages_fetched,
+    "cache_hits": cache_hits,
+    "valid_records": len(valid_records),
+    "invalid_records": len(errors),
+    "failed_pages": len(failed_pages)
+}
+
+save_json(
+    run_report,
+    "output/run-report.json"
+)
+
+
